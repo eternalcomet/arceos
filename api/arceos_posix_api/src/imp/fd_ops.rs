@@ -163,10 +163,14 @@ fn init_stdio() {
 
 pub fn sys_poll(fds: &mut [PollFd], timeout: i32) -> i32 {
     debug!("sys_poll <= fds: {:?}, timeout: {}", fds, timeout);
-    syscall_body!(
-        sys_poll,
-        sys_poll_impl(fds, timeout as u64 * NANOS_PER_MICROS, timeout < 0)
-    )
+    syscall_body!(sys_poll, {
+        let timeout = if timeout < 0 {
+            0
+        } else {
+            timeout as u64 * NANOS_PER_MICROS
+        };
+        sys_poll_impl(fds, timeout, timeout < 0)
+    })
 }
 
 pub fn sys_ppoll(fds: &mut [PollFd], timeout: *const timespec, _sigmask: *const c_void) -> i32 {
