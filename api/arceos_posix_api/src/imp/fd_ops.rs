@@ -1,13 +1,14 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::ffi::c_int;
+use core::ffi::{c_int, c_void};
 
 use crate::ctypes;
+use crate::ctypes::timespec;
 use crate::imp::fd_ops::poll_flags::*;
 use crate::imp::pipe::Pipe;
 use crate::imp::stdio::{stdin, stdout};
 use axerrno::{LinuxError, LinuxResult};
-use axhal::time::NANOS_PER_MICROS;
+use axhal::time::{NANOS_PER_MICROS, NANOS_PER_SEC};
 use axio::PollState;
 use axns::{ResArc, def_resource};
 use axtask::yield_now;
@@ -162,7 +163,33 @@ fn init_stdio() {
 
 pub fn sys_poll(fds: &mut [PollFd], timeout: i32) -> i32 {
     debug!("sys_poll <= fds: {:?}, timeout: {}", fds, timeout);
-    syscall_body!(sys_poll, sys_poll_impl(fds, timeout))
+    syscall_body!(
+        sys_poll,
+        sys_poll_impl(fds, timeout as u64 * NANOS_PER_MICROS, timeout < 0)
+    )
+}
+
+pub fn sys_ppoll(fds: &mut [PollFd], timeout: *const timespec, _sigmask: *const c_void) -> i32 {
+    debug!("sys_ppoll <= fds: {:?}, timeout: {:?}", fds, timeout);
+    syscall_body!(sys_poll, {
+        let mut block = false;
+        let mut timeout_nanos: u64 = 0;
+        if timeout.is_null() {
+            block = true;
+        } else {
+            let secs;
+            let nsecs;
+            unsafe {
+                secs = (*timeout).tv_sec;
+                nsecs = (*timeout).tv_nsec;
+            }
+            if secs < 0 || nsecs < 0 || nsecs > 999_999_999 {
+                return Err(LinuxError::EINVAL);
+            }
+            timeout_nanos = secs as u64 * NANOS_PER_SEC + nsecs as u64;
+        }
+        sys_poll_impl(fds, timeout_nanos, block)
+    })
 }
 
 /// Poll: Monitors multiple file descriptors for event readiness, with millisecond timeout precision.
@@ -179,7 +206,7 @@ pub fn sys_poll(fds: &mut [PollFd], timeout: i32) -> i32 {
 /// # Safety
 /// - The caller must ensure `fds` elements remain valid throughout the call.
 /// - The memory layout of [`PollFd`] must match C's `struct pollfd`.
-pub fn sys_poll_impl(fds: &mut [PollFd], timeout: i32) -> LinuxResult<i32> {
+pub fn sys_poll_impl(fds: &mut [PollFd], timeout: u64, block: bool) -> LinuxResult<i32> {
     for fd in fds.iter_mut() {
         fd.revents = 0;
     }
@@ -222,14 +249,19 @@ pub fn sys_poll_impl(fds: &mut [PollFd], timeout: i32) -> LinuxResult<i32> {
                 }
             }
         }
-        if updated || timeout == 0 {
-            // timeout == 0 means no wait
+        if updated {
+            // if any fd is updated, break
             break;
         }
-        if timeout > 0 {
-            let elapsed = axhal::time::monotonic_time_nanos() - now;
-            if elapsed >= timeout as u64 * NANOS_PER_MICROS {
+        if !block {
+            if timeout == 0 {
+                // timeout == 0 means no wait
                 break;
+            } else {
+                let elapsed = axhal::time::monotonic_time_nanos() - now;
+                if elapsed >= timeout {
+                    break;
+                }
             }
         }
         yield_now();
