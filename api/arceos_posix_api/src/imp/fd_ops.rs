@@ -1,4 +1,5 @@
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::ffi::c_int;
 
 use axerrno::{LinuxError, LinuxResult};
@@ -62,6 +63,14 @@ pub fn close_file_like(fd: c_int) -> LinuxResult {
     Ok(())
 }
 
+pub fn close_all_file_like() {
+    let mut fd_table = FD_TABLE.write();
+    let all_ids: Vec<_> = fd_table.ids().collect();
+    for id in all_ids {
+        let _ = fd_table.remove(id);
+    }
+}
+
 /// Close a file by `fd`.
 pub fn sys_close(fd: c_int) -> c_int {
     debug!("sys_close <= {}", fd);
@@ -81,8 +90,6 @@ pub fn sys_dup(old_fd: c_int) -> c_int {
 }
 
 /// Duplicate a file descriptor, but it uses the file descriptor number specified in `new_fd`.
-///
-/// TODO: `dup2` should forcibly close new_fd if it is already opened.
 pub fn sys_dup2(old_fd: c_int, new_fd: c_int) -> c_int {
     debug!("sys_dup2 <= old_fd: {}, new_fd: {}", old_fd, new_fd);
     syscall_body!(sys_dup2, {
@@ -94,10 +101,11 @@ pub fn sys_dup2(old_fd: c_int, new_fd: c_int) -> c_int {
             return Err(LinuxError::EBADF);
         }
 
+        // check if the old fd is open
+        let f = get_file_like(old_fd)?;
         // close the new_fd if it is already opened
         // ignore any error during the close
         close_file_like(new_fd).unwrap_or(());
-        let f = get_file_like(old_fd)?;
         FD_TABLE
             .write()
             .add_at(new_fd as usize, f)
