@@ -2,14 +2,17 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ffi::c_int;
 
+use crate::ctypes;
+use crate::imp::fd_ops::poll_flags::*;
+use crate::imp::pipe::Pipe;
+use crate::imp::stdio::{stdin, stdout};
 use axerrno::{LinuxError, LinuxResult};
+use axhal::time::NANOS_PER_MICROS;
 use axio::PollState;
 use axns::{ResArc, def_resource};
+use axtask::yield_now;
 use flatten_objects::FlattenObjects;
 use spin::RwLock;
-
-use crate::ctypes;
-use crate::imp::stdio::{stdin, stdout};
 
 pub const AX_FILE_LIMIT: usize = 1024;
 
@@ -155,4 +158,139 @@ fn init_stdio() {
         .add_at(2, Arc::new(stdout()) as _)
         .unwrap_or_else(|_| panic!()); // stderr
     FD_TABLE.init_new(spin::RwLock::new(fd_table));
+}
+
+pub fn sys_poll(fds: &mut [PollFd], timeout: i32) -> i32 {
+    debug!("sys_poll <= fds: {:?}, timeout: {}", fds, timeout);
+    syscall_body!(sys_poll, sys_poll_impl(fds, timeout))
+}
+
+/// Poll: Monitors multiple file descriptors for event readiness, with millisecond timeout precision.
+/// int poll(struct pollfd *fds, nfds_t nfds, int timeout);
+///
+/// # Parameters
+/// - `fds`: A mutable slice of [`PollFd`] structures specifying file descriptors to monitor.
+/// - `timeout`: Timeout in milliseconds. Negative value blocks indefinitely, zero returns immediately.
+///
+/// # Returns
+/// - `Ok(i32)`: Number of ready file descriptors (≥0).
+/// - `Err(LinuxError)`: Returns Linux errno on error.
+///
+/// # Safety
+/// - The caller must ensure `fds` elements remain valid throughout the call.
+/// - The memory layout of [`PollFd`] must match C's `struct pollfd`.
+pub fn sys_poll_impl(fds: &mut [PollFd], timeout: i32) -> LinuxResult<i32> {
+    for fd in fds.iter_mut() {
+        fd.revents = 0;
+    }
+    let now = axhal::time::monotonic_time_nanos();
+    loop {
+        let mut updated = false;
+        for fd in fds.iter_mut() {
+            if fd.fd < 0 {
+                // ignore it
+                continue;
+            }
+            let f = get_file_like(fd.fd);
+            if let Err(_) = f {
+                // invalid request: fd isn't open
+                fd.revents = POLLNVAL;
+                continue;
+            }
+            if let Some(pipe) = f.clone()?.into_any().downcast_ref::<Pipe>() {
+                if pipe.write_end_close() {
+                    fd.revents |= POLLHUP;
+                    updated = true;
+                }
+            }
+            match f?.poll() {
+                Ok(state) => {
+                    if state.readable && fd.events & POLLIN != 0 {
+                        fd.revents |= POLLIN;
+                        updated = true;
+                    }
+                    if state.writable && fd.events & POLLOUT != 0 {
+                        fd.revents |= POLLOUT;
+                        updated = true;
+                    }
+                }
+                Err(_) => {
+                    // poll error, for example, pipe closed
+                    fd.revents = POLLERR;
+                    updated = true;
+                    continue;
+                }
+            }
+        }
+        if updated || timeout == 0 {
+            // timeout == 0 means no wait
+            break;
+        }
+        if timeout > 0 {
+            let elapsed = axhal::time::monotonic_time_nanos() - now;
+            if elapsed >= timeout as u64 * NANOS_PER_MICROS {
+                break;
+            }
+        }
+        yield_now();
+    }
+    let mut updated_count = 0;
+    for fd in fds.iter() {
+        if fd.revents != 0 {
+            updated_count += 1;
+        }
+    }
+    Ok(updated_count)
+}
+
+/// Represents a file descriptor being monitored, mirroring C's `struct pollfd`.
+///
+/// # Memory Layout
+/// Uses `#[repr(C)]` to ensure compatibility with libc. All fields directly map to
+/// their C counterparts.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PollFd {
+    /// File descriptor to monitor.
+    ///
+    /// - Negative values cause `events` to be ignored and `revents` to be zeroed.
+    /// - To temporarily ignore a descriptor, set to negative (e.g., `!fd` via bitwise complement).
+    pub fd: i32,
+
+    /// Requested events (input parameter), constructed via bitwise OR of [`PollFlags`].
+    pub events: i16,
+
+    /// Returned events (output parameter), set by kernel. May contain [`PollFlags`]
+    /// values even if not requested.
+    pub revents: i16,
+}
+
+/// Nanosecond-precision timeout specification, equivalent to C's `struct timespec`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimeSpec {
+    /// Seconds component.
+    pub tv_sec: i64,
+
+    /// Nanoseconds component (0 to 999,999,999 inclusive).
+    pub tv_nsec: i64,
+}
+
+#[allow(dead_code)]
+pub mod poll_flags {
+    //! Input events for [`PollFd`].
+
+    /// There is data to read.
+    pub const POLLIN: i16 = 0x0001;
+    /// There is urgent data to read.
+    pub const POLLPRI: i16 = 0x0002;
+    /// Writing is now possible, though a write larger than
+    /// the available space in a socket or pipe will still block
+    pub const POLLOUT: i16 = 0x0004;
+    /// Error condition.
+    pub const POLLERR: i16 = 0x0008;
+    /// Hang up.
+    pub const POLLHUP: i16 = 0x0010;
+    /// Invalid request: fd not open.
+    pub const POLLNVAL: i16 = 0x0020;
 }
