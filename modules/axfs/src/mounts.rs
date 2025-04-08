@@ -13,6 +13,10 @@ pub(crate) fn devfs() -> Arc<fs::devfs::DeviceFileSystem> {
     devfs.add("null", Arc::new(null));
     devfs.add("zero", Arc::new(zero));
     foo_dir.add("bar", Arc::new(bar));
+    // hwclock: /dev/misc/rtc
+    let rtc = fs::devfs::ZeroDev;
+    let misc = devfs.mkdir("misc");
+    misc.add("rtc", Arc::new(rtc));
     Arc::new(devfs)
 }
 
