@@ -18,10 +18,10 @@ pub struct File {
 }
 
 impl File {
-    fn new(inner: axfs::fops::File, path: String) -> Self {
+    pub fn new(inner: axfs::fops::File, path: &str) -> Self {
         Self {
             inner: Mutex::new(inner),
-            path,
+            path: path.to_string(),
         }
     }
 
@@ -234,14 +234,21 @@ pub unsafe fn sys_stat(path: *const c_char, buf: *mut ctypes::stat) -> c_int {
     let path = char_ptr_to_str(path);
     debug!("sys_stat <= {:?} {:#x}", path, buf as usize);
     syscall_body!(sys_stat, {
+        let path = path?;
         if buf.is_null() {
             return Err(LinuxError::EFAULT);
         }
         let mut options = OpenOptions::new();
         options.read(true);
-        let file = axfs::fops::File::open(path?, &options)?;
-        let st = File::new(file, path?.to_string()).stat()?;
-        unsafe { *buf = st };
+        if let Ok(file) = axfs::fops::File::open(path, &options) {
+            let st = File::new(file, path).stat()?;
+            unsafe { *buf = st };
+        } else if let Ok(dir) = axfs::fops::Directory::open_dir(path, &options) {
+            let st = Directory::new(dir, path.to_string()).stat()?;
+            unsafe { *buf = st };
+        } else {
+            return Err(LinuxError::ENOENT);
+        }
         Ok(0)
     })
 }
