@@ -48,6 +48,10 @@ pub(crate) fn procfs() -> VfsResult<Arc<fs::ramfs::RamFileSystem>> {
     // TODO: stub
     proc_root.create("meminfo", VfsNodeType::File)?;
 
+    // Create /proc/mounts
+    // TODO: stub
+    proc_root.create("mounts", VfsNodeType::File)?;
+
     // Create /proc/self/stat
     proc_root.create("self", VfsNodeType::Dir)?;
     proc_root.create("self/stat", VfsNodeType::File)?;
