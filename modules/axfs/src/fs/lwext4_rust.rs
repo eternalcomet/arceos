@@ -59,7 +59,7 @@ unsafe impl Sync for FileWrapper {}
 
 impl FileWrapper {
     fn new(path: &str, types: InodeTypes) -> Self {
-        info!("FileWrapper new {:?} {}", types, path);
+        trace!("FileWrapper new {:?} {}", types, path);
         //file.file_read_test("/test/test.txt", &mut buf);
 
         Self(Mutex::new(Ext4File::new(path, types)))
@@ -88,7 +88,7 @@ impl FileWrapper {
         let file = self.0.lock();
         let path = file.get_path();
         let fpath = String::from(path.to_str().unwrap().trim_end_matches('/')) + "/" + p;
-        info!("dealt with full path: {}", fpath.as_str());
+        trace!("dealt with full path: {}", fpath.as_str());
         fpath
     }
 }
@@ -129,7 +129,7 @@ impl VfsNodeOps for FileWrapper {
         };
         let blocks = (size + (BLOCK_SIZE as u64 - 1)) / BLOCK_SIZE as u64;
 
-        info!(
+        trace!(
             "get_attr of {:?} {:?}, size: {}, blocks: {}",
             vtype,
             file.get_path(),
