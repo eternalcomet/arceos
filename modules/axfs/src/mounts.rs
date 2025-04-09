@@ -44,6 +44,10 @@ pub(crate) fn procfs() -> VfsResult<Arc<fs::ramfs::RamFileSystem>> {
     let file_over = proc_root.clone().lookup("./sys/vm/overcommit_memory")?;
     file_over.write_at(0, b"0\n")?;
 
+    // Create /proc/meminfo
+    // TODO: stub
+    proc_root.create("meminfo", VfsNodeType::File)?;
+
     // Create /proc/self/stat
     proc_root.create("self", VfsNodeType::Dir)?;
     proc_root.create("self/stat", VfsNodeType::File)?;
