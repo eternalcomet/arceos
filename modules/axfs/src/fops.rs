@@ -375,12 +375,33 @@ impl Directory {
         Ok(n)
     }
 
+    /// Sets the position where `read_dir` will start reading from.
+    pub fn seek(&mut self, pos: SeekFrom) -> AxResult<u64> {
+        let size = self.get_attr()?.size();
+        let new_offset = match pos {
+            SeekFrom::Start(pos) => Some(pos),
+            SeekFrom::Current(off) => self
+                .entry_idx
+                .checked_add_signed(off as isize)
+                .map(|v| v as u64),
+            // TODO: not clear if it is correct
+            SeekFrom::End(off) => size.checked_add_signed(off),
+        }
+        .ok_or_else(|| ax_err_type!(InvalidInput))?;
+        self.entry_idx = new_offset as usize;
+        Ok(new_offset)
+    }
+
     /// Rename a file or directory to a new name.
     /// Delete the original file if `old` already exists.
     ///
     /// This only works then the new path is in the same mounted fs.
     pub fn rename(&self, old: &str, new: &str) -> AxResult {
         crate::root::rename(old, new)
+    }
+
+    pub fn get_attr(&self) -> AxResult<FileAttr> {
+        self.access_node(Cap::empty())?.get_attr()
     }
 }
 

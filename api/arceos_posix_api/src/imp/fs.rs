@@ -203,11 +203,7 @@ where
         }
     }
 
-    Directory::new(
-        open_dir(filename, options).map_err(Into::into)?,
-        filename.to_string(),
-    )
-    .add_to_fd_table()
+    Directory::new(open_dir(filename, options).map_err(Into::into)?, filename).add_to_fd_table()
 }
 
 /// Set the position of the file indicated by `fd`.
@@ -244,7 +240,7 @@ pub unsafe fn sys_stat(path: *const c_char, buf: *mut ctypes::stat) -> c_int {
             let st = File::new(file, path).stat()?;
             unsafe { *buf = st };
         } else if let Ok(dir) = axfs::fops::Directory::open_dir(path, &options) {
-            let st = Directory::new(dir, path.to_string()).stat()?;
+            let st = Directory::new(dir, path).stat()?;
             unsafe { *buf = st };
         } else {
             return Err(LinuxError::ENOENT);
@@ -324,10 +320,10 @@ pub struct Directory {
 }
 
 impl Directory {
-    fn new(inner: axfs::fops::Directory, path: String) -> Self {
+    pub fn new(inner: axfs::fops::Directory, path: &str) -> Self {
         Self {
             inner: Mutex::new(inner),
-            path,
+            path: path.to_string(),
         }
     }
 
@@ -347,6 +343,11 @@ impl Directory {
     pub fn path(&self) -> &str {
         &self.path
     }
+
+    /// Get the inner node of the directory.
+    pub fn inner(&self) -> &Mutex<axfs::fops::Directory> {
+        &self.inner
+    }
 }
 
 impl FileLike for Directory {
@@ -359,7 +360,21 @@ impl FileLike for Directory {
     }
 
     fn stat(&self) -> LinuxResult<ctypes::stat> {
-        Err(LinuxError::EBADF)
+        let metadata = self.inner.lock().get_attr()?;
+        let ty = metadata.file_type() as u8;
+        let perm = metadata.perm().bits() as u32;
+        let st_mode = ((ty as u32) << 12) | perm;
+        Ok(ctypes::stat {
+            st_ino: 1,
+            st_nlink: 2,
+            st_mode,
+            st_uid: 1000,
+            st_gid: 1000,
+            st_size: metadata.size() as _,
+            st_blocks: metadata.blocks() as _,
+            st_blksize: 4096,
+            ..Default::default()
+        })
     }
 
     fn into_any(self: Arc<Self>) -> Arc<dyn core::any::Any + Send + Sync> {
