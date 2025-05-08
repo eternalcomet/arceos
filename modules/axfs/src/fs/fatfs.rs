@@ -82,7 +82,18 @@ impl<IO: IoTrait> VfsNodeOps for FileWrapper<'static, IO> {
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
         let mut file = self.0.lock();
         file.seek(SeekFrom::Start(offset)).map_err(as_vfs_err)?; // TODO: more efficient
-        file.read(buf).map_err(as_vfs_err)
+        let mut position = 0;
+        loop {
+            let len = file.read(&mut buf[position..]).map_err(as_vfs_err)?;
+            if len == 0 {
+                break;
+            }
+            position += len;
+            if position >= buf.len() {
+                break;
+            }
+        }
+        Ok(position)
     }
 
     fn write_at(&self, offset: u64, buf: &[u8]) -> VfsResult<usize> {
