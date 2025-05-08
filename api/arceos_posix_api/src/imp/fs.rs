@@ -1,15 +1,37 @@
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
-use core::ffi::{c_char, c_int};
-
 use axerrno::{LinuxError, LinuxResult};
 use axfs::fops::OpenOptions;
 use axio::{PollState, SeekFrom};
 use axsync::Mutex;
+use core::ffi::{c_char, c_int};
+use core::hash::Hash;
+use core::ptr::hash;
 
 use super::fd_ops::{FileLike, get_file_like};
 use crate::AT_FDCWD;
 use crate::{ctypes, utils::char_ptr_to_str};
+
+// TODO: remove it to `utils`
+use core::hash::Hasher;
+
+struct SimpleHasher(u64);
+impl Hasher for SimpleHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = self.0.wrapping_mul(31).wrapping_add(b as u64);
+        }
+    }
+}
+
+pub fn hash_string(s: &str) -> u64 {
+    let mut hasher = SimpleHasher(0);
+    hasher.write(s.as_bytes());
+    hasher.finish()
+}
 
 /// File wrapper for `axfs::fops::File`.
 pub struct File {
@@ -61,8 +83,10 @@ impl FileLike for File {
         let ty = metadata.file_type() as u8;
         let perm = metadata.perm().bits() as u32;
         let st_mode = ((ty as u32) << 12) | perm;
+        // TODO: true inode
+        let fake_inode = hash_string(self.path());
         Ok(ctypes::stat {
-            st_ino: 1,
+            st_ino: fake_inode,
             st_nlink: 1,
             st_mode,
             st_uid: 1000,
@@ -143,7 +167,7 @@ pub fn sys_open(filename: *const c_char, flags: c_int, mode: ctypes::mode_t) -> 
 /// filename: file path to be opened or created
 /// flags: open flags
 /// mode: see man 7 inode
-/// return new file descriptor if succeed, or return -1.
+/// return new file descriptor if success, or return -1.
 pub fn sys_openat(
     dirfd: c_int,
     filename: *const c_char,
