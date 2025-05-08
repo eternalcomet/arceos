@@ -1,4 +1,5 @@
 use page_table_entry::MappingFlags;
+use x86::controlregs::cr4;
 use x86::{controlregs::cr2, irq::*};
 use x86_64::structures::idt::PageFaultErrorCode;
 
@@ -37,6 +38,10 @@ fn x86_trap_handler(tf: &mut TrapFrame) {
         PAGE_FAULT_VECTOR => handle_page_fault(tf),
         BREAKPOINT_VECTOR => debug!("#BP @ {:#x} ", tf.rip),
         GENERAL_PROTECTION_FAULT_VECTOR => {
+            let instr = unsafe { *(tf.rip as *const u64) };
+            debug!("instr: {:#x?}", instr);
+            let cr4 = unsafe { cr4() };
+            debug!("cr4: {:?}({:#b})", cr4, cr4.bits());
             panic!(
                 "#GP @ {:#x}, error_code={:#x}:\n{:#x?}",
                 tf.rip, tf.error_code, tf
