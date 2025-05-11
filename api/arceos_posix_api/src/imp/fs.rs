@@ -142,6 +142,9 @@ fn flags_to_options(flags: c_int, _mode: ctypes::mode_t) -> OpenOptions {
     if flags & ctypes::O_DIRECTORY != 0 {
         options.directory(true);
     }
+    if flags & ctypes::O_EXCL != 0 {
+        options.create_new(true);
+    }
     options
 }
 
