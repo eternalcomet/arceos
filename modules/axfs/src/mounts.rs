@@ -25,16 +25,6 @@ pub(crate) fn ramfs() -> Arc<fs::ramfs::RamFileSystem> {
     Arc::new(fs::ramfs::RamFileSystem::new())
 }
 
-pub(crate) fn binfs() -> Arc<fs::ramfs::RamFileSystem> {
-    let binfs = fs::ramfs::RamFileSystem::new();
-    let bin_dir = binfs.root_dir();
-    bin_dir.create("sh", VfsNodeType::File).unwrap();
-    bin_dir.create("ls", VfsNodeType::File).unwrap();
-    bin_dir.create("echo", VfsNodeType::File).unwrap();
-    bin_dir.create("cat", VfsNodeType::File).unwrap();
-    Arc::new(binfs)
-}
-
 #[cfg(feature = "procfs")]
 pub(crate) fn procfs() -> VfsResult<Arc<fs::ramfs::RamFileSystem>> {
     let procfs = fs::ramfs::RamFileSystem::new();

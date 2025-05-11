@@ -193,10 +193,6 @@ pub(crate) fn init_rootfs(disk: crate::dev::Disk) {
         .mount("/tmp", mounts::ramfs())
         .expect("failed to mount ramfs at /tmp");
 
-    root_dir
-        .mount("/bin", mounts::binfs())
-        .expect("failed to mount binfs at /bin");
-
     // Mount another ramfs as procfs
     #[cfg(feature = "procfs")]
     root_dir // should not fail
