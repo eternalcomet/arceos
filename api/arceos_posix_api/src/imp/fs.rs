@@ -5,8 +5,6 @@ use axfs::fops::OpenOptions;
 use axio::{PollState, SeekFrom};
 use axsync::Mutex;
 use core::ffi::{c_char, c_int};
-use core::hash::Hash;
-use core::ptr::hash;
 
 use super::fd_ops::{FileLike, get_file_like};
 use crate::AT_FDCWD;
