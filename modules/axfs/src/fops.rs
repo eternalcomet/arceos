@@ -151,6 +151,10 @@ impl File {
         self.node.access_or_err(cap, AxError::PermissionDenied)
     }
 
+    pub fn get_node(&self) -> &VfsNodeRef {
+        unsafe { self.node.access_unchecked() }
+    }
+
     fn _open_at(dir: Option<&VfsNodeRef>, path: &str, opts: &OpenOptions) -> AxResult<Self> {
         debug!("open file: {} {:?}", path, opts);
         if !opts.is_valid() {
