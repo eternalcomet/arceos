@@ -73,9 +73,11 @@ pub unsafe fn sys_nanosleep(req: *const ctypes::timespec, rem: *mut ctypes::time
 
         let now = axhal::time::monotonic_time();
 
-        #[cfg(feature = "multitask")]
-        axtask::sleep(dur);
-        #[cfg(not(feature = "multitask"))]
+        // FIXME: this blocks for single-core, probably irq is disabled by a spin lock
+        // so we use busy wait instead of axtask::sleep to prevent deadlock
+        // #[cfg(feature = "multitask")]
+        // axtask::sleep(dur);
+        // #[cfg(not(feature = "multitask"))]
         axhal::time::busy_wait(dur);
 
         let after = axhal::time::monotonic_time();
