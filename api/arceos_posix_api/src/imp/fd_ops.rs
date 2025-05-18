@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use core::ffi::{c_int, c_void};
 
 use crate::ctypes;
-use crate::ctypes::timespec;
+use crate::ctypes::{FD_CLOEXEC, O_NONBLOCK, timespec};
 use crate::imp::fd_ops::poll_flags::*;
 use crate::imp::pipe::Pipe;
 use crate::imp::stdio::{stdin, stdout};
@@ -137,6 +137,14 @@ pub fn sys_fcntl(fd: c_int, cmd: c_int, arg: usize) -> c_int {
                 }
                 get_file_like(fd)?.set_nonblocking(arg & (ctypes::O_NONBLOCK as usize) > 0)?;
                 Ok(0)
+            }
+            ctypes::F_GETFD => {
+                warn!("unsupported fcntl parameters: F_GETFD, returning FD_CLOEXEC");
+                Ok(FD_CLOEXEC as _)
+            }
+            ctypes::F_GETFL => {
+                warn!("unsupported fcntl parameters: F_GETFL, returning O_NONBLOCK");
+                Ok(O_NONBLOCK as _)
             }
             _ => {
                 warn!("unsupported fcntl parameters: cmd {}", cmd);

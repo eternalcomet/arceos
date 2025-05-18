@@ -6,17 +6,18 @@ mod tcp;
 mod udp;
 
 use alloc::vec;
+use axerrno::{AxError, AxResult};
 use core::cell::RefCell;
 use core::ops::DerefMut;
 
 use axdriver::prelude::*;
 use axdriver_net::{DevError, NetBufPtr};
-use axhal::time::{NANOS_PER_MICROS, wall_time_nanos};
+use axhal::time::NANOS_PER_MICROS;
 use axsync::Mutex;
-use lazyinit::LazyInit;
+use lazy_init::LazyInit;
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
-use smoltcp::socket::{self, AnySocket};
+use smoltcp::socket::{self, AnySocket, Socket};
 use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr};
 
@@ -25,7 +26,8 @@ use self::listen_table::ListenTable;
 pub use self::dns::dns_query;
 pub use self::tcp::TcpSocket;
 pub use self::udp::UdpSocket;
-
+pub use addr::{from_core_sockaddr, into_core_sockaddr};
+#[allow(unused)]
 macro_rules! env_or_default {
     ($key:literal) => {
         match option_env!($key) {
@@ -35,15 +37,10 @@ macro_rules! env_or_default {
     };
 }
 
-const IP: &str = env_or_default!("AX_IP");
-const GATEWAY: &str = env_or_default!("AX_GW");
 const DNS_SEVER: &str = "8.8.8.8";
-const IP_PREFIX: u8 = 24;
-
-const STANDARD_MTU: usize = 1500;
 
 const RANDOM_SEED: u64 = 0xA2CE_05A2_CE05_A2CE;
-
+const STANDARD_MTU: usize = 1500;
 const TCP_RX_BUF_LEN: usize = 64 * 1024;
 const TCP_TX_BUF_LEN: usize = 64 * 1024;
 const UDP_RX_BUF_LEN: usize = 64 * 1024;
@@ -52,6 +49,16 @@ const LISTEN_QUEUE_SIZE: usize = 512;
 
 static LISTEN_TABLE: LazyInit<ListenTable> = LazyInit::new();
 static SOCKET_SET: LazyInit<SocketSetWrapper> = LazyInit::new();
+
+mod loopback;
+static LOOPBACK_DEV: LazyInit<Mutex<LoopbackDev>> = LazyInit::new();
+static LOOPBACK: LazyInit<Mutex<Interface>> = LazyInit::new();
+use self::loopback::LoopbackDev;
+
+const IP: &str = env_or_default!("AX_IP");
+const GATEWAY: &str = env_or_default!("AX_GW");
+const IP_PREFIX: u8 = 24;
+
 static ETH0: LazyInit<InterfaceWrapper> = LazyInit::new();
 
 struct SocketSetWrapper<'a>(Mutex<SocketSet<'a>>);
@@ -80,11 +87,11 @@ impl<'a> SocketSetWrapper<'a> {
 
     pub fn new_udp_socket() -> socket::udp::Socket<'a> {
         let udp_rx_buffer = socket::udp::PacketBuffer::new(
-            vec![socket::udp::PacketMetadata::EMPTY; 8],
+            vec![socket::udp::PacketMetadata::EMPTY; 256],
             vec![0; UDP_RX_BUF_LEN],
         );
         let udp_tx_buffer = socket::udp::PacketBuffer::new(
-            vec![socket::udp::PacketMetadata::EMPTY; 8],
+            vec![socket::udp::PacketMetadata::EMPTY; 256],
             vec![0; UDP_TX_BUF_LEN],
         );
         socket::udp::Socket::new(udp_rx_buffer, udp_tx_buffer)
@@ -119,8 +126,33 @@ impl<'a> SocketSetWrapper<'a> {
         f(socket)
     }
 
+    pub fn bind_check(&self, addr: IpAddress, _port: u16) -> AxResult {
+        let mut sockets = self.0.lock();
+        for item in sockets.iter_mut() {
+            match item.1 {
+                Socket::Tcp(s) => {
+                    let local_addr = s.get_bound_endpoint();
+                    if local_addr.addr == Some(addr) {
+                        return Err(AxError::AddrInUse);
+                    }
+                }
+                Socket::Udp(s) => {
+                    if s.endpoint().addr == Some(addr) {
+                        return Err(AxError::AddrInUse);
+                    }
+                }
+                _ => continue,
+            };
+        }
+        Ok(())
+    }
+
     pub fn poll_interfaces(&self) {
-        ETH0.poll(&self.0);
+        LOOPBACK.lock().poll(
+            Instant::from_micros_const((0 / NANOS_PER_MICROS) as i64),
+            LOOPBACK_DEV.lock().deref_mut(),
+            &mut self.0.lock(),
+        );
     }
 
     pub fn remove(&self, handle: SocketHandle) {
@@ -129,6 +161,7 @@ impl<'a> SocketSetWrapper<'a> {
     }
 }
 
+#[allow(unused)]
 impl InterfaceWrapper {
     fn new(name: &'static str, dev: AxNetDevice, ether_addr: EthernetAddress) -> Self {
         let mut config = Config::new(HardwareAddress::Ethernet(ether_addr));
@@ -145,7 +178,7 @@ impl InterfaceWrapper {
     }
 
     fn current_time() -> Instant {
-        Instant::from_micros_const((wall_time_nanos() / NANOS_PER_MICROS) as i64)
+        Instant::from_micros_const((0 / NANOS_PER_MICROS) as i64)
     }
 
     pub fn name(&self) -> &str {
@@ -167,6 +200,7 @@ impl InterfaceWrapper {
         let mut iface = self.iface.lock();
         match gateway {
             IpAddress::Ipv4(v4) => iface.routes_mut().add_default_ipv4_route(v4).unwrap(),
+            IpAddress::Ipv6(v6) => iface.routes_mut().add_default_ipv6_route(v6).unwrap(),
         };
     }
 
@@ -244,7 +278,7 @@ impl Device for DeviceWrapper {
 struct AxNetRxToken<'a>(&'a RefCell<AxNetDevice>, NetBufPtr);
 struct AxNetTxToken<'a>(&'a RefCell<AxNetDevice>);
 
-impl RxToken for AxNetRxToken<'_> {
+impl<'a> RxToken for AxNetRxToken<'a> {
     fn preprocess(&self, sockets: &mut SocketSet<'_>) {
         snoop_tcp_packet(self.1.packet(), sockets).ok();
     }
@@ -265,7 +299,7 @@ impl RxToken for AxNetRxToken<'_> {
     }
 }
 
-impl TxToken for AxNetTxToken<'_> {
+impl<'a> TxToken for AxNetTxToken<'a> {
     fn consume<R, F>(self, len: usize, f: F) -> R
     where
         F: FnOnce(&mut [u8]) -> R,
@@ -316,21 +350,47 @@ pub fn bench_receive() {
     ETH0.dev.lock().bench_receive_bandwidth();
 }
 
-pub(crate) fn init(net_dev: AxNetDevice) {
-    let ether_addr = EthernetAddress(net_dev.mac_address().0);
-    let eth0 = InterfaceWrapper::new("eth0", net_dev, ether_addr);
+/// Add multicast_addr to the loopback device.
+pub fn add_membership(multicast_addr: IpAddress, _interface_addr: IpAddress) {
+    let timestamp = Instant::from_micros_const((0 / NANOS_PER_MICROS) as i64);
+    let _ = LOOPBACK.lock().join_multicast_group(
+        LOOPBACK_DEV.lock().deref_mut(),
+        multicast_addr,
+        timestamp,
+    );
+}
+
+pub(crate) fn init(_net_dev: AxNetDevice) {
+    let mut device = LoopbackDev::new(Medium::Ip);
+    let config = Config::new(smoltcp::wire::HardwareAddress::Ip);
+
+    let mut iface = Interface::new(
+        config,
+        &mut device,
+        Instant::from_micros_const((0 / NANOS_PER_MICROS) as i64),
+    );
+    iface.update_ip_addrs(|ip_addrs| {
+        ip_addrs
+            .push(IpCidr::new(IpAddress::v4(127, 0, 0, 1), 8))
+            .unwrap();
+    });
+    LOOPBACK.init_by(Mutex::new(iface));
+    LOOPBACK_DEV.init_by(Mutex::new(device));
+
+    let ether_addr = EthernetAddress(_net_dev.mac_address().0);
+    let eth0 = InterfaceWrapper::new("eth0", _net_dev, ether_addr);
 
     let ip = IP.parse().expect("invalid IP address");
     let gateway = GATEWAY.parse().expect("invalid gateway IP address");
     eth0.setup_ip_addr(ip, IP_PREFIX);
     eth0.setup_gateway(gateway);
 
-    ETH0.init_once(eth0);
-    SOCKET_SET.init_once(SocketSetWrapper::new());
-    LISTEN_TABLE.init_once(ListenTable::new());
-
+    ETH0.init_by(eth0);
     info!("created net interface {:?}:", ETH0.name());
     info!("  ether:    {}", ETH0.ethernet_address());
     info!("  ip:       {}/{}", ip, IP_PREFIX);
     info!("  gateway:  {}", gateway);
+
+    SOCKET_SET.init_by(SocketSetWrapper::new());
+    LISTEN_TABLE.init_by(ListenTable::new());
 }
