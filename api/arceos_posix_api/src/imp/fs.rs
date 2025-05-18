@@ -389,8 +389,9 @@ impl FileLike for Directory {
         let ty = metadata.file_type() as u8;
         let perm = metadata.perm().bits() as u32;
         let st_mode = ((ty as u32) << 12) | perm;
+        let fake_inode = hash_string(self.path());
         Ok(ctypes::stat {
-            st_ino: 1,
+            st_ino: fake_inode,
             st_nlink: 2,
             st_mode,
             st_uid: 1000,
