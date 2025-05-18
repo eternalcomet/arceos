@@ -129,7 +129,7 @@ impl AddrSpace {
             return ax_err!(InvalidInput, "address not aligned");
         }
 
-        let offset = start_vaddr.as_usize() - start_paddr.as_usize();
+        let offset = start_vaddr.as_usize().wrapping_sub(start_paddr.as_usize());
         let area = MemoryArea::new(start_vaddr, size, flags, Backend::new_linear(offset));
         self.areas
             .map(area, &mut self.pt, false)
@@ -406,7 +406,10 @@ impl AddrSpace {
                     Ok((paddr, _, _)) => paddr,
                     // If the page is not mapped, skip it.
                     Err(PagingError::NotMapped) => continue,
-                    Err(_) => return Err(AxError::BadAddress),
+                    Err(_) => {
+                        error!("Bad Address at {}:{}:{}", module_path!(), file!(), line!());
+                        return Err(AxError::BadAddress);
+                    }
                 };
                 let new_addr = match new_aspace.pt.query(vaddr) {
                     Ok((paddr, _, _)) => paddr,
@@ -417,10 +420,16 @@ impl AddrSpace {
                         }
                         match new_aspace.pt.query(vaddr) {
                             Ok((paddr, _, _)) => paddr,
-                            Err(_) => return Err(AxError::BadAddress),
+                            Err(_) => {
+                                error!("Bad Address at {}:{}:{}", module_path!(), file!(), line!());
+                                return Err(AxError::BadAddress);
+                            }
                         }
                     }
-                    Err(_) => return Err(AxError::BadAddress),
+                    Err(_) => {
+                        error!("Bad Address at {}:{}:{}", module_path!(), file!(), line!());
+                        return Err(AxError::BadAddress);
+                    }
                 };
                 unsafe {
                     core::ptr::copy_nonoverlapping(
