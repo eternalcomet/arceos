@@ -102,44 +102,6 @@ pub unsafe fn sys_readv(fd: c_int, iov: *const ctypes::iovec, iocnt: c_int) -> c
     })
 }
 
-/// pread64: read from a file descriptor at a given offset
-pub fn sys_pread64(
-    fd: c_int,
-    buf: *mut c_void,
-    count: usize,
-    offset: ctypes::off_t,
-) -> ctypes::ssize_t {
-    debug!(
-        "[sys_pread64] fd={}, buf={:#x}, count={}, offset={}",
-        fd, buf as usize, count, offset
-    );
-    syscall_body!(sys_pread64, {
-        if buf.is_null() {
-            return Err(LinuxError::EFAULT);
-        }
-        let dst = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, count) };
-        #[cfg(feature = "fd")]
-        {
-            let file = File::from_fd(fd)?;
-            let file = file.inner();
-            let origin_offset = file.lock().seek(SeekFrom::Current(0))?;
-            file.lock().seek(SeekFrom::Start(offset as _))?;
-            let result = file.lock().read(dst)?;
-            file.lock().seek(SeekFrom::Start(origin_offset))?;
-            Ok(result as ctypes::ssize_t)
-        }
-        #[cfg(not(feature = "fd"))]
-        {
-            warn!("[sys_pread64] pread64 is not supported on this platform");
-            match fd {
-                0 => Ok(super::stdio::stdin().read(dst, offset)? as ctypes::ssize_t),
-                1 | 2 => Err(LinuxError::EPERM),
-                _ => Err(LinuxError::EBADF),
-            }
-        }
-    })
-}
-
 /// sendfile: transfer data between file descriptors
 ///
 /// The `sendfile()` system call copies data between one file descriptor (`in_fd`)
