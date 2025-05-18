@@ -2,6 +2,7 @@
 //!
 //! TODO: it doesn't work very well if the mount points have containment relationships.
 
+use alloc::string::ToString;
 use alloc::{string::String, sync::Arc, vec::Vec};
 use axerrno::{AxError, AxResult, ax_err};
 use axfs_vfs::{VfsNodeAttr, VfsNodeOps, VfsNodeRef, VfsNodeType, VfsOps, VfsResult};
@@ -107,16 +108,18 @@ impl RootDirectory {
 
         // Find the filesystem that has the longest mounted path match
         // TODO: more efficient, e.g. trie
+        let path_cmp = path.to_string() + "/";
         for (i, mp) in self.mounts.read().iter().enumerate() {
             // skip the first '/'
-            if path.starts_with(&mp.path[1..]) && mp.path.len() - 1 > max_len {
+            let prefix = mp.path[1..].to_string() + "/";
+            if path_cmp.starts_with(&prefix) && mp.path.len() - 1 > max_len {
                 max_len = mp.path.len() - 1;
                 idx = i;
             }
         }
 
         if max_len == 0 {
-            f(self.main_fs.clone(), path) // not matched any mount point
+            f(self.main_fs.clone(), &path) // not matched any mount point
         } else {
             f(self.mounts.read()[idx].fs.clone(), &path[max_len..]) // matched at `idx`
         }
