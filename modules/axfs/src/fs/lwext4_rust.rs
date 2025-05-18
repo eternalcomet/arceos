@@ -1,6 +1,7 @@
 use crate::alloc::string::String;
 use alloc::string::ToString;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use axerrno::AxError;
 use axfs_vfs::{VfsDirEntry, VfsError, VfsNodePerm, VfsResult};
 use axfs_vfs::{VfsNodeAttr, VfsNodeOps, VfsNodeRef, VfsNodeType, VfsOps};
@@ -66,31 +67,36 @@ impl FileWrapper {
         Self(Mutex::new(Ext4File::new(path, types)))
     }
 
+    // get full path
     fn path_deal_with(&self, path: &str) -> String {
         if path.starts_with('/') {
-            warn!("path_deal_with: {}", path);
-        }
-        let p = path.trim_matches('/'); // 首尾去除
-        if p.is_empty() || p == "." {
-            return String::new();
+            error!("[lwext4]: path should not be absolute: {}", path);
         }
 
-        if let Some(rest) = p.strip_prefix("./") {
-            //if starts with "./"
-            return self.path_deal_with(rest);
-        }
-        let rest_p = p.replace("//", "/");
-        if p != rest_p {
-            return self.path_deal_with(&rest_p);
+        let mount = self.0.lock().get_path();
+        let base_path = mount.to_string_lossy();
+        let mut base = base_path
+            .split('/')
+            .filter(|s| !s.is_empty() && *s != ".")
+            .collect::<Vec<_>>();
+
+        let segments = path.split('/').filter(|s| !s.is_empty() && *s != ".");
+        for seg in segments {
+            if seg == ".." {
+                if !base.is_empty() && base[base.len() - 1] != ".." {
+                    base.pop();
+                } else {
+                    base.push(seg); // 相对路径允许保留超出层级的..
+                }
+            } else {
+                base.push(seg);
+            }
         }
 
-        //Todo ? ../
-        //注：lwext4创建文件必须提供文件path的绝对路径
-        let file = self.0.lock();
-        let path = file.get_path();
-        let fpath = String::from(path.to_str().unwrap().trim_end_matches('/')) + "/" + p;
-        trace!("dealt with full path: {}", fpath.as_str());
-        fpath
+        let mut full_path = base.join("/");
+        full_path.insert(0, '/');
+
+        full_path
     }
 }
 
