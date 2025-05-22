@@ -1,17 +1,19 @@
-use alloc::sync::Arc;
-use alloc::vec::Vec;
-use core::ffi::{c_int, c_void};
-
 use crate::ctypes;
 use crate::ctypes::{FD_CLOEXEC, O_NONBLOCK, timespec};
 use crate::imp::fd_ops::poll_flags::*;
 use crate::imp::pipe::Pipe;
 use crate::imp::stdio::{stdin, stdout};
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 use axerrno::{LinuxError, LinuxResult};
 use axhal::time::{NANOS_PER_MICROS, NANOS_PER_SEC};
 use axio::PollState;
 use axns::{ResArc, def_resource};
 use axtask::yield_now;
+use core::ffi::{c_int, c_void};
+use core::mem::replace;
+use core::ops::Deref;
+use core::ptr::drop_in_place;
 use flatten_objects::FlattenObjects;
 use spin::RwLock;
 
@@ -68,10 +70,21 @@ pub fn close_file_like(fd: c_int) -> LinuxResult {
 }
 
 pub fn close_all_file_like() {
-    let mut fd_table = FD_TABLE.write();
-    let all_ids: Vec<_> = fd_table.ids().collect();
-    for id in all_ids {
-        let _ = fd_table.remove(id);
+    let ref_count = FD_TABLE.ref_count();
+    debug!("ref count for FD_TABLE is {}", ref_count);
+
+    if ref_count == 1 {
+        let mut fd_table = FD_TABLE.write();
+        let all_ids: Vec<_> = fd_table.ids().collect();
+        for id in all_ids {
+            drop(fd_table.remove(id));
+        }
+    }
+
+    let res = FD_TABLE.deref();
+    let res_ptr = FD_TABLE::as_ptr(res);
+    unsafe {
+        drop_in_place(res_ptr);
     }
 }
 

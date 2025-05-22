@@ -141,6 +141,11 @@ impl<T> ResArc<T> {
     pub fn is_inited(&self) -> bool {
         self.0.is_inited()
     }
+
+    pub fn ref_count(&self) -> usize {
+        let arc = self.0.deref();
+        Arc::strong_count(arc)
+    }
 }
 
 impl<T> Deref for ResArc<T> {
@@ -229,6 +234,10 @@ macro_rules! def_resource {
             $vis struct $name { __value: () }
 
             impl $name {
+                pub fn as_ptr(obj: &$ty) -> *mut $ty {
+                    obj as *const _ as *mut $ty
+                }
+
                 unsafe fn deref_from_base(&self, ns_base: *mut u8) -> &$ty {
                     unsafe extern {
                         fn __start_axns_resource();
