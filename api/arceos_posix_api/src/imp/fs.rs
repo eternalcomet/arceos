@@ -11,6 +11,7 @@ use crate::AT_FDCWD;
 use crate::{ctypes, utils::char_ptr_to_str};
 
 // TODO: remove it to `utils`
+use crate::ctypes::timespec;
 use core::hash::Hasher;
 
 struct SimpleHasher(i32);
@@ -35,6 +36,8 @@ pub fn hash_string(s: &str) -> u64 {
 pub struct File {
     inner: Mutex<axfs::fops::File>,
     path: String,
+    pub atime: Mutex<timespec>,
+    pub mtime: Mutex<timespec>,
 }
 
 impl File {
@@ -42,6 +45,8 @@ impl File {
         Self {
             inner: Mutex::new(inner),
             path: path.to_string(),
+            atime: Mutex::new(timespec::default()),
+            mtime: Mutex::new(timespec::default()),
         }
     }
 
@@ -92,6 +97,8 @@ impl FileLike for File {
             st_size: metadata.size() as _,
             st_blocks: metadata.blocks() as _,
             st_blksize: 512,
+            st_atime: *self.atime.lock(),
+            st_mtime: *self.mtime.lock(),
             ..Default::default()
         })
     }
