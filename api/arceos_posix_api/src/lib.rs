@@ -41,10 +41,7 @@ pub use imp::time::{sys_clock_gettime, sys_get_time_of_day, sys_nanosleep};
 #[cfg(feature = "fd")]
 pub use imp::fd_ops::*;
 #[cfg(feature = "fs")]
-pub use imp::fs::{
-    Directory, File, sys_fstat, sys_getcwd, sys_lseek, sys_lstat, sys_open, sys_openat, sys_rename,
-    sys_stat,
-};
+pub use imp::fs::{Directory, File, sys_lseek, sys_open, sys_openat, sys_rename};
 #[cfg(feature = "select")]
 pub use imp::io_mpx::sys_select;
 #[cfg(feature = "epoll")]
