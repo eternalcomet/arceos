@@ -1,8 +1,8 @@
-use crate::ctypes;
-use crate::ctypes::{FD_CLOEXEC, O_NONBLOCK, timespec};
+use crate::ctypes::{FD_CLOEXEC, O_NONBLOCK, O_RDWR, timespec};
 use crate::imp::fd_ops::poll_flags::*;
 use crate::imp::pipe::Pipe;
 use crate::imp::stdio::{stdin, stdout};
+use crate::{File, ctypes};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use axerrno::{LinuxError, LinuxResult};
@@ -156,8 +156,14 @@ pub fn sys_fcntl(fd: c_int, cmd: c_int, arg: usize) -> c_int {
                 Ok(FD_CLOEXEC as _)
             }
             ctypes::F_GETFL => {
-                warn!("unsupported fcntl parameters: F_GETFL, returning O_NONBLOCK");
-                Ok(O_NONBLOCK as _)
+                let file = get_file_like(fd)?.into_any();
+                if let Some(_) = file.downcast_ref::<File>() {
+                    warn!("unsupported fcntl parameters: F_GETFL, returning O_RDWR");
+                    Ok(O_RDWR as _)
+                } else {
+                    warn!("unsupported fcntl parameters: F_GETFL, returning O_NONBLOCK");
+                    Ok(O_NONBLOCK as _)
+                }
             }
             _ => {
                 warn!("unsupported fcntl parameters: cmd {}", cmd);
